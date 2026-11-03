@@ -1,1 +1,301 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#17130d">
+<title>Mintage Restaurant Kotte Recipe Book</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#111;color:#f5f0e5;font-family:Arial,sans-serif}
+header{background:#201a10;padding:22px 15px;text-align:center;border-bottom:2px solid #bd984e}
+h1{font-size:22px;color:#e5c47b;margin:0}
+.sub{color:#c9b990;font-size:12px;margin-top:7px}
+main{max-width:850px;margin:auto;padding:16px}
+.card{background:#201e19;border:1px solid #51432b;border-radius:12px;padding:16px;margin-bottom:16px}
+h2{font-size:18px;color:#e5c47b;margin-top:0}
+input,button{font-size:15px;border-radius:7px;padding:12px}
+input{width:100%;background:#111;color:white;border:1px solid #665638;margin:5px 0}
+button{border:0;cursor:pointer;font-weight:bold;margin:4px 2px}
+.primary{background:#c69d50;color:#17130d}
+.secondary{background:#45413a;color:white}
+.danger{background:#8b302b;color:white}
+.hidden{display:none}
+.row{display:grid;grid-template-columns:1.5fr 1fr .8fr;gap:6px}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+th,td{padding:10px 6px;border-bottom:1px solid #51432b;text-align:left;font-size:14px}
+th{color:#e5c47b}
+.recipe{border-bottom:1px solid #51432b;padding:12px 0}
+.recipe h3{margin:0 0 8px;color:#e5c47b}
+.small{font-size:12px;color:#bdb5a5}
+#status,#loginStatus,#formStatus{color:#e5c47b;font-size:13px;margin-top:10px}
+@media(max-width:480px){.row{grid-template-columns:1fr 1fr 1fr}th,td{font-size:12px;padding:8px 3px}}
+</style>
+</head>
+<body>
+<header>
+<h1>MINTAGE RESTAURANT KOTTE</h1>
+<div class="sub">PROFESSIONAL KITCHEN RECIPE BOOK</div>
+</header>
+
+<main>
+<section class="card" id="loginBox">
+<h2>Staff Login</h2>
+<input id="email" type="email" placeholder="Staff email">
+<input id="password" type="password" placeholder="Password">
+<button class="primary" onclick="login()">LOGIN</button>
+<div id="loginStatus"></div>
+</section>
+
+<div id="app" class="hidden">
+<section class="card">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+<strong>Welcome to Mintage Recipe Book</strong>
+<button class="secondary" onclick="logout()">LOG OUT</button>
+</div>
+<div id="status">Connecting...</div>
+</section>
+
+<section class="card">
+<h2>Search Recipe</h2>
+<input id="search" placeholder="Search food name..." oninput="renderRecipes()">
+<div id="recipeList"></div>
+</section>
+
+<section class="card" id="editor">
+<h2 id="formTitle">Add New Recipe</h2>
+<label>Recipe Name</label>
+<input id="recipeName" placeholder="Enter recipe name">
+<h3>INGREDIENTS</h3>
+<div class="row small">
+<div>Ingredient</div><div>Quantity</div><div>Unit</div>
+</div>
+<div id="ingredients"></div>
+<button class="secondary" onclick="addIngredient()">+ ADD INGREDIENT</button>
+<br>
+<button class="primary" onclick="saveRecipe()">SAVE RECIPE</button>
+<button class="secondary" onclick="clearForm()">CLEAR</button>
+<div id="formStatus"></div>
+</section>
+
+<section class="card">
+<h2>Recipe Backup</h2>
+<button class="primary" onclick="backup()">DOWNLOAD JSON BACKUP</button>
+</section>
+</div>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+
+<script>
+const firebaseConfig = {
+apiKey: "AIzaSyAwDALwr7Da1FGPHzW1VpvsbRcUXHw0AOs",
+authDomain: "mintage-restaurant-kotte-rpb.firebaseapp.com",
+projectId: "mintage-restaurant-kotte-rpb",
+storageBucket: "mintage-restaurant-kotte-rpb.firebasestorage.app",
+messagingSenderId: "260132354885",
+appId: "1:260132354885:web:06d0007241a78acc351c2c",
+measurementId: "G-MJE4WYLP1H"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+let recipes = [];
+let editingId = null;
+let unsubscribe = null;
+
+try {
+db.enablePersistence({synchronizeTabs:true}).catch(e => console.log("Offline cache:",e.code));
+} catch(e) {}
+
+function login(){
+const email=document.getElementById("email").value.trim();
+const password=document.getElementById("password").value;
+document.getElementById("loginStatus").textContent="Logging in...";
+auth.signInWithEmailAndPassword(email,password)
+.catch(e=>document.getElementById("loginStatus").textContent=e.message);
+}
+
+function logout(){auth.signOut();}
+
+auth.onAuthStateChanged(user=>{
+document.getElementById("loginBox").classList.toggle("hidden",!!user);
+document.getElementById("app").classList.toggle("hidden",!user);
+
+if(user){
+document.getElementById("status").textContent="Loading recipes...";
+if(unsubscribe) unsubscribe();
+
+unsubscribe=db.collection("recipes").onSnapshot(snapshot=>{
+recipes=snapshot.docs.map(doc=>({id:doc.id,...doc.data()}));
+renderRecipes();
+document.getElementById("status").textContent=
+navigator.onLine?"Connected • Recipes synced":"Offline • Saved recipes";
+},error=>{
+document.getElementById("status").textContent="Database error: "+error.message;
+});
+}else{
+if(unsubscribe) unsubscribe();
+recipes=[];
+}
+});
+
+function addIngredient(name="",quantity="",unit=""){
+const div=document.createElement("div");
+div.className="row ingredient-row";
+
+const n=document.createElement("input");
+n.className="ing-name";
+n.placeholder="Ingredient";
+n.value=name;
+
+const q=document.createElement("input");
+q.className="ing-qty";
+q.placeholder="Quantity";
+q.value=quantity;
+
+const u=document.createElement("input");
+u.className="ing-unit";
+u.placeholder="Unit";
+u.value=unit;
+
+div.append(n,q,u);
+document.getElementById("ingredients").appendChild(div);
+}
+
+function clearForm(){
+editingId=null;
+document.getElementById("recipeName").value="";
+document.getElementById("ingredients").innerHTML="";
+document.getElementById("formTitle").textContent="Add New Recipe";
+document.getElementById("formStatus").textContent="";
+addIngredient();
+}
+
+async function saveRecipe(){
+const name=document.getElementById("recipeName").value.trim();
+const rows=[...document.querySelectorAll(".ingredient-row")];
+
+const ingredients=rows.map(row=>({
+name:row.querySelector(".ing-name").value.trim(),
+quantity:row.querySelector(".ing-qty").value.trim(),
+unit:row.querySelector(".ing-unit").value.trim()
+})).filter(x=>x.name);
+
+if(!name){
+document.getElementById("formStatus").textContent="Enter a recipe name.";
+return;
+}
+if(!ingredients.length){
+document.getElementById("formStatus").textContent="Add at least one ingredient.";
+return;
+}
+
+const data={
+name,
+ingredients,
+updatedAt:firebase.firestore.FieldValue.serverTimestamp()
+};
+
+try{
+if(editingId){
+await db.collection("recipes").doc(editingId).update(data);
+}else{
+data.createdAt=firebase.firestore.FieldValue.serverTimestamp();
+await db.collection("recipes").add(data);
+}
+document.getElementById("formStatus").textContent="Recipe saved successfully!";
+clearForm();
+}catch(e){
+document.getElementById("formStatus").textContent="Error: "+e.message;
+}
+}
+
+function editRecipe(id){
+const r=recipes.find(x=>x.id===id);
+if(!r)return;
+
+editingId=id;
+document.getElementById("recipeName").value=r.name||"";
+document.getElementById("ingredients").innerHTML="";
+
+(r.ingredients||[]).forEach(x=>addIngredient(x.name,x.quantity,x.unit));
+
+document.getElementById("formTitle").textContent="Edit Recipe";
+document.getElementById("formStatus").textContent="Editing recipe";
+document.getElementById("editor").scrollIntoView({behavior:"smooth"});
+}
+
+async function deleteRecipe(id){
+if(!confirm("Delete this recipe?"))return;
+try{
+await db.collection("recipes").doc(id).delete();
+}catch(e){alert(e.message);}
+}
+
+function escapeHtml(value){
+return String(value??"").replace(/[&<>"']/g,c=>({
+"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+}[c]));
+}
+
+function renderRecipes(){
+const term=document.getElementById("search").value.toLowerCase();
+const list=document.getElementById("recipeList");
+list.innerHTML="";
+
+const filtered=recipes.filter(r=>(r.name||"").toLowerCase().includes(term));
+filtered.sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+
+if(!filtered.length){
+list.textContent="No matching recipes found.";
+return;
+}
+
+filtered.forEach(r=>{
+const div=document.createElement("div");
+div.className="recipe";
+
+let html="<h3>"+escapeHtml(r.name)+"</h3>";
+html+="<table><thead><tr><th>Ingredient</th><th>Quantity</th><th>Unit</th></tr></thead><tbody>";
+
+(r.ingredients||[]).forEach(i=>{
+html+="<tr><td>"+escapeHtml(i.name)+"</td><td>"+escapeHtml(i.quantity)+"</td><td>"+escapeHtml(i.unit)+"</td></tr>";
+});
+
+html+="</tbody></table>";
+html+='<button class="secondary" onclick="editRecipe(\''+r.id+'\')">EDIT</button>';
+html+='<button class="danger" onclick="deleteRecipe(\''+r.id+'\')">DELETE</button>';
+
+div.innerHTML=html;
+list.appendChild(div);
+});
+}
+
+function backup(){
+const blob=new Blob([JSON.stringify(recipes,null,2)],{type:"application/json"});
+const url=URL.createObjectURL(blob);
+const a=document.createElement("a");
+a.href=url;
+a.download="Mintage-Recipe-Backup.json";
+a.click();
+URL.revokeObjectURL(url);
+}
+
+addIngredient();
+
+window.addEventListener("online",()=>{
+document.getElementById("status").textContent="Internet connected";
+});
+window.addEventListener("offline",()=>{
+document.getElementById("status").textContent="Offline mode";
+});
+</script>
+</body>
+</html>
+
